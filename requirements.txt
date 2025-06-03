@@ -1,3 +1,7 @@
 requests
 bs4 
 mcp
+aiohttp
+lxml
+asyncio
+typing-extensions

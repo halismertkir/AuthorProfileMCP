@@ -308,36 +308,51 @@ class AuthorSearchEngine:
                     
                     keywords = []
                     
-                    # Extract interests/keywords
-                    interests = soup.find_all('a', class_='gsc_prf_inta')
-                    for interest in interests:
-                        keyword_text = interest.get_text().strip()
-                        if keyword_text:
+                    # Extract interests/keywords from the specific div structure
+                    interests_div = soup.find('div', class_='gsc_prf_il')
+                    if interests_div:
+                        interest_links = interests_div.find_all('a', class_='gsc_prf_inta')
+                        for interest in interest_links:
+                            keyword_text = interest.get_text().strip()
+                            if keyword_text:
+                                keywords.append({
+                                    'keyword': keyword_text,
+                                    'source': 'verified_interests',
+                                    'frequency': 1
+                                })
+                    
+                    # Also try alternative selector for interests
+                    if not keywords:
+                        interests = soup.find_all('a', class_='gsc_prf_inta')
+                        for interest in interests:
+                            keyword_text = interest.get_text().strip()
+                            if keyword_text:
+                                keywords.append({
+                                    'keyword': keyword_text,
+                                    'source': 'interests',
+                                    'frequency': 1
+                                })
+                    
+                    # If still no keywords from interests, extract from publication titles
+                    if not keywords:
+                        title_keywords = Counter()
+                        titles = soup.find_all('a', class_='gsc_a_at')
+                        
+                        for title in titles[:10]:  # Limit to first 10 publications
+                            title_text = title.get_text().lower()
+                            # Extract meaningful words (basic keyword extraction)
+                            words = re.findall(r'\b[a-zA-Z]{4,}\b', title_text)
+                            # Filter out common words
+                            filtered_words = [w for w in words if w not in ['using', 'based', 'analysis', 'study', 'approach', 'method', 'system', 'model', 'paper', 'research']]
+                            title_keywords.update(filtered_words)
+                        
+                        # Add title-based keywords
+                        for word, freq in title_keywords.most_common(10):
                             keywords.append({
-                                'keyword': keyword_text,
-                                'source': 'interests',
-                                'frequency': 1
+                                'keyword': word.capitalize(),
+                                'source': 'publications',
+                                'frequency': freq
                             })
-                    
-                    # Extract keywords from publication titles
-                    title_keywords = Counter()
-                    titles = soup.find_all('a', class_='gsc_a_at')
-                    
-                    for title in titles[:20]:  # Limit to first 20 publications
-                        title_text = title.get_text().lower()
-                        # Extract meaningful words (basic keyword extraction)
-                        words = re.findall(r'\b[a-zA-Z]{4,}\b', title_text)
-                        # Filter out common words
-                        filtered_words = [w for w in words if w not in ['using', 'based', 'analysis', 'study', 'approach', 'method', 'system', 'model']]
-                        title_keywords.update(filtered_words)
-                    
-                    # Add title-based keywords
-                    for word, freq in title_keywords.most_common(15):
-                        keywords.append({
-                            'keyword': word.capitalize(),
-                            'source': 'publications',
-                            'frequency': freq
-                        })
                     
                     return keywords
                     

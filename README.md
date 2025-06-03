@@ -5,8 +5,7 @@ A Model Context Protocol (MCP) server for analyzing academic author networks and
 ## Features
 
 - **get_coauthors**: Find all co-authors for a given researcher
-- **get_author_keywords**: Extract research keywords and areas from publications  
-- **get_second_degree_network**: Discover second-degree connections (co-authors of co-authors)
+- **get_author_keywords**: Extract research keywords from Google Scholar profile
 
 ## Installation
 
@@ -40,7 +39,7 @@ result = await get_coauthors(
 )
 ```
 
-#### Getting Research Keywords
+#### Getting Research Keywords from Google Scholar
 ```python
 keywords = await get_author_keywords(
     name="Yann",
@@ -48,31 +47,21 @@ keywords = await get_author_keywords(
 )
 ```
 
-#### Analyzing Second-Degree Network
-```python
-network = await get_second_degree_network(
-    name="Yann",
-    surname="LeCun",
-    max_connections=50  # Optional, default 50
-)
-```
-
 ## Data Sources
 
-The server aggregates data from multiple academic APIs:
+The server uses:
 
 - **Semantic Scholar API**: Primary source for author and publication data
-- **OpenAlex API**: Open academic knowledge graph
+- **OpenAlex API**: Open academic knowledge graph  
 - **Crossref API**: DOI resolution and metadata
-- **arXiv API**: Preprint server data
-- **PubMed API**: Biomedical literature (future enhancement)
+- **Google Scholar**: Web scraping for research interests and keywords
 
 ## Features
 
-- **Rate Limiting**: Respects API rate limits
-- **Caching**: Reduces redundant API calls
-- **Error Handling**: Graceful handling of API failures
-- **Data Merging**: Combines data from multiple sources
+- **Rate Limiting**: Respects API rate limits and includes delays for web scraping
+- **Caching**: Reduces redundant API calls and scraping requests
+- **Error Handling**: Graceful handling of API failures and scraping issues
+- **Data Merging**: Combines data from multiple sources for co-authors
 - **Async Operations**: Parallel API requests for better performance
 
 ## Configuration
@@ -82,9 +71,9 @@ The server includes built-in rate limiting and error handling. No additional con
 ## Limitations
 
 - Free tier API limits apply
-- Some APIs may require registration for higher rate limits
-- Google Scholar scraping is not implemented due to anti-bot measures
+- Google Scholar scraping includes respectful delays
 - Results quality depends on author name uniqueness
+- Web scraping may occasionally fail due to anti-bot measures
 
 ## Contributing
 

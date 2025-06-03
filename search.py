@@ -3,6 +3,7 @@ import aiohttp
 import json
 import time
 import hashlib
+import re
 from typing import Dict, List, Optional, Any, Set, Tuple
 from urllib.parse import quote
 from bs4 import BeautifulSoup
@@ -259,38 +260,103 @@ class AuthorSearchEngine:
         self.cache[cache_key] = keyword_list
         return keyword_list
 
-    async def get_second_degree_network(self, name: str, surname: str, institution: Optional[str] = None, max_connections: int = 50) -> Dict[str, Any]:
-        """Get second-degree network for a given author."""
-        cache_key = self._get_cache_key('network', name, surname, institution, max_connections)
+    async def _scrape_google_scholar(self, name: str, surname: str, institution: Optional[str] = None) -> List[Dict]:
+        """Scrape Google Scholar for author publications and keywords."""
+        await asyncio.sleep(2)  # Be respectful with delays
+        
+        query = f"{name} {surname}"
+        if institution:
+            query += f" {institution}"
+            
+        url = f"https://scholar.google.com/citations?view_op=search_authors&mauthors={quote(query)}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        if not self.session:
+            self.session = aiohttp.ClientSession()
+            
+        try:
+            async with self.session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    content = await response.text()
+                    soup = BeautifulSoup(content, 'html.parser')
+                    
+                    # Find author profile links
+                    profile_links = soup.find_all('a', href=re.compile(r'/citations\?user='))
+                    
+                    if profile_links:
+                        # Get the first matching profile
+                        profile_url = "https://scholar.google.com" + profile_links[0]['href']
+                        return await self._scrape_scholar_profile(profile_url, headers)
+                        
+        except Exception as e:
+            logger.error(f"Google Scholar scraping error: {str(e)}")
+        
+        return []
+
+    async def _scrape_scholar_profile(self, profile_url: str, headers: Dict) -> List[Dict]:
+        """Scrape individual Google Scholar profile for keywords."""
+        await asyncio.sleep(2)  # Rate limiting
+        
+        try:
+            async with self.session.get(profile_url, headers=headers) as response:
+                if response.status == 200:
+                    content = await response.text()
+                    soup = BeautifulSoup(content, 'html.parser')
+                    
+                    keywords = []
+                    
+                    # Extract interests/keywords
+                    interests = soup.find_all('a', class_='gsc_prf_inta')
+                    for interest in interests:
+                        keyword_text = interest.get_text().strip()
+                        if keyword_text:
+                            keywords.append({
+                                'keyword': keyword_text,
+                                'source': 'interests',
+                                'frequency': 1
+                            })
+                    
+                    # Extract keywords from publication titles
+                    title_keywords = Counter()
+                    titles = soup.find_all('a', class_='gsc_a_at')
+                    
+                    for title in titles[:20]:  # Limit to first 20 publications
+                        title_text = title.get_text().lower()
+                        # Extract meaningful words (basic keyword extraction)
+                        words = re.findall(r'\b[a-zA-Z]{4,}\b', title_text)
+                        # Filter out common words
+                        filtered_words = [w for w in words if w not in ['using', 'based', 'analysis', 'study', 'approach', 'method', 'system', 'model']]
+                        title_keywords.update(filtered_words)
+                    
+                    # Add title-based keywords
+                    for word, freq in title_keywords.most_common(15):
+                        keywords.append({
+                            'keyword': word.capitalize(),
+                            'source': 'publications',
+                            'frequency': freq
+                        })
+                    
+                    return keywords
+                    
+        except Exception as e:
+            logger.error(f"Scholar profile scraping error: {str(e)}")
+        
+        return []
+
+    async def get_author_keywords_from_scholar(self, name: str, surname: str, institution: Optional[str] = None) -> List[Dict]:
+        """Get research keywords for a given author from Google Scholar only."""
+        cache_key = self._get_cache_key('scholar_keywords', name, surname, institution)
         if cache_key in self.cache:
             return self.cache[cache_key]
 
-        # First get co-authors
-        coauthors = await self.get_coauthors(name, surname, institution)
+        # Scrape Google Scholar
+        keywords = await self._scrape_google_scholar(name, surname, institution)
         
-        network = {}
-        processed_count = 0
+        # Sort by frequency and source priority
+        keywords.sort(key=lambda x: (x['source'] == 'interests', x['frequency']), reverse=True)
         
-        # For each co-author, get their co-authors
-        for coauthor in coauthors[:10]:  # Limit to first 10 to avoid too many requests
-            if processed_count >= max_connections:
-                break
-                
-            coauthor_name_parts = coauthor['name'].split()
-            if len(coauthor_name_parts) >= 2:
-                first_name = coauthor_name_parts[0]
-                last_name = coauthor_name_parts[-1]
-                
-                try:
-                    second_degree = await self.get_coauthors(first_name, last_name)
-                    network[coauthor['name']] = {
-                        'collaborations_with_main_author': coauthor['collaborations'],
-                        'second_degree': second_degree[:20]  # Limit second degree connections
-                    }
-                    processed_count += len(second_degree)
-                except Exception as e:
-                    logger.error(f"Error getting second degree for {coauthor['name']}: {str(e)}")
-                    continue
-
-        self.cache[cache_key] = network
-        return network
+        self.cache[cache_key] = keywords
+        return keywords

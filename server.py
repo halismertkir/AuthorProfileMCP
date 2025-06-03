@@ -67,7 +67,7 @@ async def get_author_keywords(
     institution: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Get research keywords/areas for a given author.
+    Get research keywords/areas for a given author from Google Scholar.
     
     Args:
         name: Author's first name
@@ -75,12 +75,12 @@ async def get_author_keywords(
         institution: Optional institution affiliation
     
     Returns:
-        Dictionary containing keywords with frequencies
+        Dictionary containing keywords extracted from Google Scholar
     """
     try:
-        logger.info(f"Searching keywords for {name} {surname}")
+        logger.info(f"Searching keywords for {name} {surname} on Google Scholar")
         
-        keywords = await search_engine.get_author_keywords(
+        keywords = await search_engine.get_author_keywords_from_scholar(
             name=name,
             surname=surname,
             institution=institution
@@ -90,62 +90,17 @@ async def get_author_keywords(
             "success": True,
             "author": f"{name} {surname}",
             "institution": institution,
+            "source": "Google Scholar",
             "total_keywords": len(keywords),
             "keywords": keywords
         }
         
     except Exception as e:
-        logger.error(f"Error getting keywords: {str(e)}")
+        logger.error(f"Error getting keywords from Google Scholar: {str(e)}")
         return {
             "success": False,
             "error": str(e),
             "keywords": []
-        }
-
-@mcp.tool()
-async def get_second_degree_network(
-    name: str,
-    surname: str,
-    institution: Optional[str] = None,
-    max_connections: int = 50
-) -> Dict[str, Any]:
-    """
-    Get second-degree network (co-authors of co-authors) for a given author.
-    
-    Args:
-        name: Author's first name
-        surname: Author's last name
-        institution: Optional institution affiliation
-        max_connections: Maximum number of second-degree connections to return
-    
-    Returns:
-        Dictionary containing second-degree network grouped by first-degree connections
-    """
-    try:
-        logger.info(f"Searching second-degree network for {name} {surname}")
-        
-        network = await search_engine.get_second_degree_network(
-            name=name,
-            surname=surname,
-            institution=institution,
-            max_connections=max_connections
-        )
-        
-        return {
-            "success": True,
-            "author": f"{name} {surname}",
-            "institution": institution,
-            "network_size": sum(len(connections["second_degree"]) for connections in network.values()),
-            "first_degree_count": len(network),
-            "network": network
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting second-degree network: {str(e)}")
-        return {
-            "success": False,
-            "error": str(e),
-            "network": {}
         }
 
 if __name__ == "__main__":

@@ -260,118 +260,104 @@ class AuthorSearchEngine:
         self.cache[cache_key] = keyword_list
         return keyword_list
 
-    async def _scrape_google_scholar(self, name: str, surname: str, institution: Optional[str] = None) -> List[Dict]:
-        """Scrape Google Scholar for author publications and keywords."""
-        await asyncio.sleep(2)  # Be respectful with delays
-        
-        query = f"{name} {surname}"
-        if institution:
-            query += f" {institution}"
-            
-        url = f"https://scholar.google.com/citations?view_op=search_authors&mauthors={quote(query)}"
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        if not self.session:
-            self.session = aiohttp.ClientSession()
-            
-        try:
-            async with self.session.get(url, headers=headers) as response:
-                if response.status == 200:
-                    content = await response.text()
-                    soup = BeautifulSoup(content, 'html.parser')
-                    
-                    # Find author profile links
-                    profile_links = soup.find_all('a', href=re.compile(r'/citations\?user='))
-                    
-                    if profile_links:
-                        # Get the first matching profile
-                        profile_url = "https://scholar.google.com" + profile_links[0]['href']
-                        return await self._scrape_scholar_profile(profile_url, headers)
-                        
-        except Exception as e:
-            logger.error(f"Google Scholar scraping error: {str(e)}")
-        
-        return []
-
-    async def _scrape_scholar_profile(self, profile_url: str, headers: Dict) -> List[Dict]:
-        """Scrape individual Google Scholar profile for keywords."""
-        await asyncio.sleep(2)  # Rate limiting
-        
-        try:
-            async with self.session.get(profile_url, headers=headers) as response:
-                if response.status == 200:
-                    content = await response.text()
-                    soup = BeautifulSoup(content, 'html.parser')
-                    
-                    keywords = []
-                    
-                    # Extract interests/keywords from the specific div structure
-                    interests_div = soup.find('div', class_='gsc_prf_il')
-                    if interests_div:
-                        interest_links = interests_div.find_all('a', class_='gsc_prf_inta')
-                        for interest in interest_links:
-                            keyword_text = interest.get_text().strip()
-                            if keyword_text:
-                                keywords.append({
-                                    'keyword': keyword_text,
-                                    'source': 'verified_interests',
-                                    'frequency': 1
-                                })
-                    
-                    # Also try alternative selector for interests
-                    if not keywords:
-                        interests = soup.find_all('a', class_='gsc_prf_inta')
-                        for interest in interests:
-                            keyword_text = interest.get_text().strip()
-                            if keyword_text:
-                                keywords.append({
-                                    'keyword': keyword_text,
-                                    'source': 'interests',
-                                    'frequency': 1
-                                })
-                    
-                    # If still no keywords from interests, extract from publication titles
-                    if not keywords:
-                        title_keywords = Counter()
-                        titles = soup.find_all('a', class_='gsc_a_at')
-                        
-                        for title in titles[:10]:  # Limit to first 10 publications
-                            title_text = title.get_text().lower()
-                            # Extract meaningful words (basic keyword extraction)
-                            words = re.findall(r'\b[a-zA-Z]{4,}\b', title_text)
-                            # Filter out common words
-                            filtered_words = [w for w in words if w not in ['using', 'based', 'analysis', 'study', 'approach', 'method', 'system', 'model', 'paper', 'research']]
-                            title_keywords.update(filtered_words)
-                        
-                        # Add title-based keywords
-                        for word, freq in title_keywords.most_common(10):
-                            keywords.append({
-                                'keyword': word.capitalize(),
-                                'source': 'publications',
-                                'frequency': freq
-                            })
-                    
-                    return keywords
-                    
-        except Exception as e:
-            logger.error(f"Scholar profile scraping error: {str(e)}")
-        
-        return []
-
-    async def get_author_keywords_from_scholar(self, name: str, surname: str, institution: Optional[str] = None) -> List[Dict]:
+    async def get_author_keywords_from_scholar(self, name: str, surname: str, institution: Optional[str] = None) -> List[str]:
         """Get research keywords for a given author from Google Scholar only."""
         cache_key = self._get_cache_key('scholar_keywords', name, surname, institution)
         if cache_key in self.cache:
             return self.cache[cache_key]
 
-        # Scrape Google Scholar
-        keywords = await self._scrape_google_scholar(name, surname, institution)
+        try:
+            # Step 1: Search for author and find their profile URL
+            profile_url = await self._search_author_profile(name, surname, institution)
+            
+            # Small delay to be respectful
+            await asyncio.sleep(1)
+            
+            # Step 2: Extract keywords from profile
+            keywords = await self._extract_keywords_from_profile(profile_url)
+            
+            self.cache[cache_key] = keywords
+            return keywords
+            
+        except Exception as e:
+            logger.error(f"Error getting keywords from Google Scholar: {str(e)}")
+            return []
+
+    async def _search_author_profile(self, name: str, surname: str, institution: str = None):
+        """Step 1: Search for author and find their profile URL"""
+        if not self.session:
+            self.session = aiohttp.ClientSession()
+            
+        search_query = f"{name} {surname}"
+        if institution:
+            search_query += f" {institution}"
         
-        # Sort by frequency and source priority
-        keywords.sort(key=lambda x: (x['source'] == 'interests', x['frequency']), reverse=True)
+        search_url = f"https://scholar.google.com/scholar?q={quote(search_query)}"
         
-        self.cache[cache_key] = keywords
-        return keywords
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        async with self.session.get(search_url, headers=headers) as response:
+            if response.status != 200:
+                raise Exception(f"Search failed with status {response.status}")
+            
+            html = await response.text()
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # Look for citation profile links
+            citation_links = soup.find_all('a', href=lambda x: x and 'citations?user=' in x)
+            
+            if not citation_links:
+                raise Exception("No author profile found in search results")
+            
+            # Get the first profile URL
+            profile_href = citation_links[0].get('href')
+            if profile_href.startswith('/'):
+                profile_url = 'https://scholar.google.com' + profile_href
+            else:
+                profile_url = profile_href
+            
+            return profile_url
+
+    async def _extract_keywords_from_profile(self, profile_url: str):
+        """Step 2: Extract keywords from author's profile page"""
+        if not self.session:
+            self.session = aiohttp.ClientSession()
+            
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        async with self.session.get(profile_url, headers=headers) as response:
+            if response.status != 200:
+                raise Exception(f"Profile page failed with status {response.status}")
+            
+            html = await response.text()
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # Look for interests/keywords section
+            interests_div = soup.find('div', {'id': 'gsc_prf_int'})
+            
+            if not interests_div:
+                # Try alternative selectors
+                interests_div = soup.find('div', class_='gsc_prf_il')
+            
+            if not interests_div:
+                return []
+            
+            # Extract keyword links
+            keyword_links = interests_div.find_all('a', class_='gsc_prf_inta')
+            keywords = [link.get_text().strip() for link in keyword_links if link.get_text().strip()]
+            
+            return keywords
+
+    async def _scrape_google_scholar(self, name: str, surname: str, institution: Optional[str] = None) -> List[Dict]:
+        """Deprecated - use get_author_keywords_from_scholar instead"""
+        keywords = await self.get_author_keywords_from_scholar(name, surname, institution)
+        return [{'keyword': kw, 'source': 'google_scholar', 'frequency': 1} for kw in keywords]
+
+    async def _scrape_scholar_profile(self, profile_url: str, headers: Dict) -> List[Dict]:
+        """Deprecated - use _extract_keywords_from_profile instead"""
+        keywords = await self._extract_keywords_from_profile(profile_url)
+        return [{'keyword': kw, 'source': 'google_scholar', 'frequency': 1} for kw in keywords]
